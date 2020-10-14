@@ -14,6 +14,7 @@ fn index() -> &'static str {
 fn main() {
     rocket::ignite()
         .mount("/", routes![index])
+        .mount("/api/v1/crates", route::api::v1::crates::routes())
         .mount("/crates/index", route::crates::index::routes())
         .attach(AdHoc::on_attach("IndexDir Config", |rocket| {
             // println!("config={:?}", rocket.config());
