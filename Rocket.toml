@@ -1,0 +1,2 @@
+[development]
+index_options = { path = "/home/devel/workspace/projects/crates.io-index" }

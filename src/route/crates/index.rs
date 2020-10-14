@@ -1,6 +1,7 @@
+use crate::IndexOptions;
 use rocket::http::{ContentType, Status};
 use rocket::request::Form;
-use rocket::{Data, Response, Route};
+use rocket::{Data, Response, Route, State};
 use std::io::{Cursor, Read, Result as IoResult, Seek, SeekFrom};
 use std::process::{Command, Stdio};
 
@@ -30,12 +31,12 @@ fn index() -> &'static str {
 }
 
 #[get("/info/refs?service=git-upload-pack")]
-fn fetch_refs() -> Option<Response<'static>> {
+fn fetch_refs(index_options: State<IndexOptions>) -> Option<Response<'static>> {
     let mut output = Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
         .arg("--advertise-refs")
-        .arg("/home/devel/workspace/projects/crates.io-index")
+        .arg(&index_options.path)
         .output()
         .expect("failed to execute process");
 
@@ -62,11 +63,11 @@ fn fetch_refs() -> Option<Response<'static>> {
     // format = "x-git-upload-pack-request",
     data = "<data>"
 )]
-fn fetch_content(data: Data) -> Option<Response<'static>> {
+fn fetch_content(data: Data, index_options: State<IndexOptions>) -> Option<Response<'static>> {
     let mut process = match Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
-        .arg("/home/devel/workspace/projects/crates.io-index")
+        .arg(&index_options.path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
