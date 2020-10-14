@@ -5,6 +5,8 @@
 #[macro_use]
 extern crate rocket;
 
+use serde::Serialize;
+
 pub mod route;
 
 #[derive(Debug)]
@@ -23,5 +25,32 @@ impl IndexOptions {
         Self {
             path: "crates.io-index".to_string(),
         }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ResponseData<'a, T> {
+    code: usize,
+    #[serde(rename = "type")]
+    type_: &'a str,
+    message: String,
+    data: T,
+}
+
+impl<'a, T> ResponseData<'a, T>
+where
+    T: Serialize,
+{
+    fn new(code: usize, message: String, data: T) -> Self {
+        Self {
+            code,
+            type_: "unknown",
+            message,
+            data,
+        }
+    }
+
+    pub fn success(data: T) -> Self {
+        Self::new(200, "".into(), data)
     }
 }

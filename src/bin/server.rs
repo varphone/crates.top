@@ -16,7 +16,7 @@ fn main() {
         .mount("/", routes![index])
         .mount("/crates/index", route::crates::index::routes())
         .attach(AdHoc::on_attach("IndexDir Config", |rocket| {
-            println!("config={:?}", rocket.config());
+            // println!("config={:?}", rocket.config());
             let mut index_options = IndexOptions::default();
             if let Ok(table) = rocket.config().get_table("index_options") {
                 if let Some(s) = table.get("path") {

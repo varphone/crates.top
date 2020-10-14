@@ -1,16 +1,17 @@
-use crate::IndexOptions;
+use crate::{IndexOptions, ResponseData};
 use rocket::http::{ContentType, Status};
-use rocket::request::Form;
 use rocket::{Data, Response, Route, State};
-use std::io::{Cursor, Read, Result as IoResult, Seek, SeekFrom};
+use rocket_contrib::json::Json;
+use std::io::{self, Cursor, Read, Write};
 use std::process::{Command, Stdio};
+use std::string::String;
 
 struct Readers {
     readers: Vec<Box<dyn Read>>,
 }
 
 impl Read for Readers {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut offset: usize = 0;
         for r in self.readers.iter_mut() {
             offset += r.read(&mut buf[offset..])?;
@@ -31,14 +32,13 @@ fn index() -> &'static str {
 }
 
 #[get("/info/refs?service=git-upload-pack")]
-fn fetch_refs(index_options: State<IndexOptions>) -> Option<Response<'static>> {
-    let mut output = Command::new("git")
+fn fetch_refs(index_options: State<IndexOptions>) -> io::Result<Response<'static>> {
+    let output = Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
         .arg("--advertise-refs")
         .arg(&index_options.path)
-        .output()
-        .expect("failed to execute process");
+        .output()?;
 
     let response = Response::build()
         .status(Status::Ok)
@@ -55,7 +55,7 @@ fn fetch_refs(index_options: State<IndexOptions>) -> Option<Response<'static>> {
         ]))
         .finalize();
 
-    Some(response)
+    Ok(response)
 }
 
 #[post(
@@ -63,31 +63,70 @@ fn fetch_refs(index_options: State<IndexOptions>) -> Option<Response<'static>> {
     // format = "x-git-upload-pack-request",
     data = "<data>"
 )]
-fn fetch_content(data: Data, index_options: State<IndexOptions>) -> Option<Response<'static>> {
-    let mut process = match Command::new("git")
+fn fetch_content(data: Data, index_options: State<IndexOptions>) -> io::Result<Response<'static>> {
+    let mut process = Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
         .arg(&index_options.path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-    {
-        Err(why) => panic!("couldn't spawn git: {}", why),
-        Ok(process) => process,
-    };
+        .spawn()?;
 
-    let stdin = process.stdin.as_mut().expect("Failed to open stdin");
-    data.stream_to(stdin).map(|n| format!("Wrote {} bytes.", n));
+    let stdin = process
+        .stdin
+        .as_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Standard Input"))?;
+    data.stream_to(stdin)?;
 
     let response = Response::build()
         .status(Status::Ok)
         .header(ContentType::new("application", "x-git-upload-pack-result"))
-        .streamed_body(process.stdout.take().unwrap())
+        .streamed_body(
+            process
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Standard Output"))?,
+        )
         .finalize();
 
-    Some(response)
+    Ok(response)
+}
+
+const SYNC_CMD: &str = "git fetch upstream && git checkout -b tmp master && git rebase upstream/master && git checkout master && git branch -D tmp && git rebase upstream/master";
+
+#[get("/sync")]
+fn sync(index_options: State<IndexOptions>) -> Json<ResponseData<String>> {
+    // Fetch and test rebase
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .current_dir(&index_options.path)
+            .args(&["/C", SYNC_CMD])
+            .output()
+    } else {
+        Command::new("sh")
+            .current_dir(&index_options.path)
+            .arg("-c")
+            .arg(SYNC_CMD)
+            .output()
+    };
+
+    match output {
+        Ok(output) => {
+            io::stdout().write_all(&output.stderr).unwrap();
+            if output.status.success() {
+                Json(ResponseData::success("".into()))
+            } else {
+                Json(ResponseData::new(
+                    500,
+                    "Repo rebase failure!".into(),
+                    String::from_utf8(output.stderr).unwrap(),
+                ))
+            }
+        }
+        Err(err) => Json(ResponseData::new(500, err.to_string(), "".into())),
+    }
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![index, fetch_refs, fetch_content]
+    routes![index, fetch_refs, fetch_content, sync]
 }
