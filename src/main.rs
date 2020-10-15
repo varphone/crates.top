@@ -1,7 +1,8 @@
 use clap::{App, Arg, SubCommand};
 use crates_top::cmd;
 
-fn main() {
+#[rocket::main]
+async fn main() {
     let matches = App::new("Crates.top, the top overlay of crates.io")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Varphone Wong <varphone@qq.com>")
@@ -19,8 +20,8 @@ fn main() {
         .get_matches();
 
     let r = match matches.subcommand() {
-        ("admin", Some(matches)) => cmd::admin::run(matches),
-        ("web", Some(matches)) => cmd::web::run(matches),
+        ("admin", Some(matches)) => cmd::admin::run(matches).await,
+        ("web", Some(matches)) => cmd::web::run(matches).await,
         _ => Ok(()),
     };
 

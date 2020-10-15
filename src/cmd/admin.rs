@@ -2,6 +2,6 @@ use crate::CmdResult;
 
 use clap::ArgMatches;
 
-pub fn run(_args: &ArgMatches<'_>) -> CmdResult {
+pub async fn run(_args: &ArgMatches<'_>) -> CmdResult {
     Ok(())
 }

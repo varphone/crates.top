@@ -1,32 +1,14 @@
-use crate::{IndexOptions, ResponseData};
+use crate::{AsyncReader, AsyncWriter, IndexOptions, Readers, ResponseData};
 
+use rocket::data::{Data, ToByteUnit};
 use rocket::http::{ContentType, Status};
+use rocket::response::{Debug, Response};
 use rocket::{get, post, routes};
-use rocket::{Data, Response, Route, State};
+use rocket::{Route, State};
 use rocket_contrib::json::Json;
 use std::io::{self, Cursor, Read, Write};
 use std::process::{Command, Stdio};
 use std::string::String;
-
-struct Readers {
-    readers: Vec<Box<dyn Read>>,
-}
-
-impl Read for Readers {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut offset: usize = 0;
-        for r in self.readers.iter_mut() {
-            offset += r.read(&mut buf[offset..])?;
-        }
-        Ok(offset)
-    }
-}
-
-impl Readers {
-    pub fn new(readers: Vec<Box<dyn Read>>) -> Self {
-        Self { readers }
-    }
-}
 
 #[get("/")]
 fn index() -> &'static str {
@@ -34,7 +16,7 @@ fn index() -> &'static str {
 }
 
 #[get("/info/refs?service=git-upload-pack")]
-fn fetch_refs(index_options: State<IndexOptions>) -> io::Result<Response<'static>> {
+fn fetch_refs(index_options: State<IndexOptions>) -> Result<Response<'_>, Debug<io::Error>> {
     let output = Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
@@ -42,22 +24,29 @@ fn fetch_refs(index_options: State<IndexOptions>) -> io::Result<Response<'static
         .arg(&index_options.path)
         .output()?;
 
+    let mut buffer: Vec<u8> = vec![];
+    buffer.extend_from_slice(b"001e# service=git-upload-pack\n0000");
+    buffer.extend_from_slice(&output.stdout);
+
     let response = Response::build()
         .status(Status::Ok)
+        .raw_header("Cache-Control", "no-cache, max-age=0, must-revalidate")
         .header(ContentType::new(
             "application",
             "x-git-upload-pack-advertisement",
         ))
-        .raw_header("Cache-Control", "no-cache, max-age=0, must-revalidate")
         .raw_header("Expires", "Fri, 01 Jan 1980 00:00:00 GMT")
         .raw_header("Pragma", "no-cache")
-        .streamed_body(Readers::new(vec![
-            Box::new(Cursor::new(b"001e# service=git-upload-pack\n0000")),
-            Box::new(Cursor::new(output.stdout)),
-        ]))
-        .finalize();
+        .raw_header("Set-Cookie", "lang=en-US; Path=/; Max-Age=2147483647")
+        .sized_body(buffer.len(), Cursor::new(buffer))
+        // .streamed_body(Readers::new(vec![
+        //     Box::new(Cursor::new(b"001e# service=git-upload-pack\n0000")),
+        //     Box::new(Cursor::new(output.stdout)),
+        // ]))
+        .ok();
 
-    Ok(response)
+    response
+    // Ok(response)
 }
 
 #[post(
@@ -65,7 +54,10 @@ fn fetch_refs(index_options: State<IndexOptions>) -> io::Result<Response<'static
     // format = "x-git-upload-pack-request",
     data = "<data>"
 )]
-fn fetch_content(data: Data, index_options: State<IndexOptions>) -> io::Result<Response<'static>> {
+async fn fetch_content(
+    data: Data,
+    index_options: State<'_, IndexOptions>,
+) -> Result<Response<'_>, Debug<io::Error>> {
     let mut process = Command::new("git")
         .arg("upload-pack")
         .arg("--stateless-rpc")
@@ -78,20 +70,22 @@ fn fetch_content(data: Data, index_options: State<IndexOptions>) -> io::Result<R
         .stdin
         .as_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Standard Input"))?;
-    data.stream_to(stdin)?;
+    data.open(4usize.kibibytes())
+        .stream_to(AsyncWriter(stdin))
+        .await?;
+
+    let stdout = process
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Standard Output"))?;
 
     let response = Response::build()
         .status(Status::Ok)
         .header(ContentType::new("application", "x-git-upload-pack-result"))
-        .streamed_body(
-            process
-                .stdout
-                .take()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Standard Output"))?,
-        )
-        .finalize();
+        .streamed_body(AsyncReader(stdout))
+        .ok();
 
-    Ok(response)
+    response
 }
 
 const SYNC_CMD: &str = "git fetch upstream && git checkout -b tmp master && git rebase upstream/master && git checkout master && git branch -D tmp && git rebase upstream/master";
