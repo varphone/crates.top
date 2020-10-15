@@ -1,19 +1,11 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+use crate::{route, CmdResult, IndexOptions};
 
-#[macro_use]
-extern crate rocket;
-
-use crates_top::{route, IndexOptions};
+use clap::ArgMatches;
 use rocket::fairing::AdHoc;
 
-#[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
-}
-
-fn main() {
+pub fn run(_args: &ArgMatches<'_>) -> CmdResult {
     rocket::ignite()
-        .mount("/", routes![index])
+        // .mount("/", routes![index])
         .mount("/api/v1/crates", route::api::v1::crates::routes())
         .mount("/crates/index", route::crates::index::routes())
         .attach(AdHoc::on_attach("IndexDir Config", |rocket| {
@@ -28,4 +20,5 @@ fn main() {
             Ok(rocket.manage(index_options))
         }))
         .launch();
+    Ok(())
 }

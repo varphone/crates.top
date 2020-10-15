@@ -1,5 +1,7 @@
 use crate::{IndexOptions, ResponseData};
+
 use rocket::http::{ContentType, Status};
+use rocket::{get, post, routes};
 use rocket::{Data, Response, Route, State};
 use rocket_contrib::json::Json;
 use std::io::{self, Cursor, Read, Write};

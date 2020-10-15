@@ -1,4 +1,5 @@
 use rocket::Route;
+use rocket::{get, routes};
 
 #[get("/")]
 fn index() -> &'static str {
